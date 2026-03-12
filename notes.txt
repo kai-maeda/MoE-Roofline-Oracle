@@ -1,3 +1,0 @@
-MoE models
-5. arithmetic intensity for different layers and (phases), op is compute or memory bound
-    - expected MFU and latency metrics
