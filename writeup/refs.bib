@@ -1,0 +1,42 @@
+@inproceedings{narayanan2021efficient,
+  title     = {Efficient Large-Scale Language Model Training on {GPU} Clusters Using {Megatron-LM}},
+  author    = {Narayanan, Deepak and Shoeybi, Mohammad and Casper, Jared and LeGresley, Patrick and Patwary, Mostofa and Korthikanti, Vijay Anand and Vainbrand, Dmitri and Kashinkunti, Prethvi and Bernauer, Julie and Catanzaro, Bryan and Phanishayee, Amar and Zaharia, Matei},
+  booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC'21)},
+  year      = {2021},
+  doi       = {10.1145/3458817.3476209},
+}
+
+@article{gale2023megablocks,
+  title   = {{MegaBlocks}: Efficient Sparse Training with Mixture-of-Experts},
+  author  = {Gale, Trevor and Narayanan, Deepak and Young, Cliff and Zaharia, Matei},
+  journal = {Proceedings of Machine Learning and Systems (MLSys)},
+  volume  = {5},
+  year    = {2023},
+  url     = {https://arxiv.org/abs/2211.15841},
+}
+
+@inproceedings{zhong2024distserve,
+  title     = {{DistServe}: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving},
+  author    = {Zhong, Yinmin and Liu, Shengyu and Chen, Junda and Hu, Jianbo and Zhu, Yibo and Liu, Xuanzhe and Jin, Xin and Zhang, Hao},
+  booktitle = {18th USENIX Symposium on Operating Systems Design and Implementation (OSDI'24)},
+  year      = {2024},
+  url       = {https://arxiv.org/abs/2401.09670},
+}
+
+@misc{chen2025inferencemax,
+  title        = {{InferenceMAX}: Open Source Inference Benchmarking},
+  author       = {Chen, Kimbo and Patel, Dylan and Nishball, Daniel and others},
+  year         = {2025},
+  month        = {October},
+  howpublished = {SemiAnalysis},
+  note         = {Covers NVIDIA GB200 NVL72, AMD MI355X; metrics include throughput token per GPU, latency tok/s/user, cost per million tokens, tokens per provisioned megawatt; models: DeepSeek R1 670B, GPTOSS 120B, Llama3 70B},
+}
+
+@misc{patel2026inferencex,
+  title        = {{InferenceX} v2: {NVIDIA} Blackwell vs {AMD} vs Hopper},
+  author       = {Patel, Dylan and Quilici, Cam and Shan, Bryan and others},
+  year         = {2026},
+  month        = {February},
+  howpublished = {SemiAnalysis},
+  note         = {Formerly InferenceMAX. Covers GB300 NVL72, MI355X, B200, H100; topics: disaggregated serving, wide expert parallelism, large MoE, SGLang, vLLM, TRT-LLM},
+}

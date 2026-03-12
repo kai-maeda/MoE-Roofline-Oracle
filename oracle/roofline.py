@@ -104,7 +104,7 @@ def roofline(
     flops: float,
     bytes_moved: float,
     name: str = "op",
-    hardware_efficiency: float = 0.85,
+    hardware_efficiency: Optional[float] = None,
     dtype_compute_scale: float = 1.0,
 ) -> RooflineResult:
     """
@@ -115,13 +115,21 @@ def roofline(
         flops: Total floating point operations
         bytes_moved: Total bytes transferred to/from HBM
         name: Operator label
-        hardware_efficiency: Fraction of peak achievable (accounts for
-            instruction overhead, memory controller efficiency, etc.)
+        hardware_efficiency: Override for both compute and BW efficiency (0-1).
+            If None (default), uses gpu.sw_efficiency_compute and gpu.sw_efficiency_bw,
+            which are per-GPU estimates based on community benchmarks.
         dtype_compute_scale: Multiplier on peak compute for dtype.
             FP8 = 2.0 (tensor cores process 2x ops vs BF16). BF16/FP16 = 1.0.
     """
-    peak_compute = gpu.flops_bf16 * 1e12 * hardware_efficiency * dtype_compute_scale  # FLOP/s
-    peak_bw = gpu.hbm_bandwidth_tb * 1e12 * hardware_efficiency   # bytes/s
+    if hardware_efficiency is not None:
+        eff_compute = hardware_efficiency
+        eff_bw = hardware_efficiency
+    else:
+        eff_compute = gpu.sw_efficiency_compute
+        eff_bw = gpu.sw_efficiency_bw
+
+    peak_compute = gpu.flops_bf16 * 1e12 * eff_compute * dtype_compute_scale  # FLOP/s
+    peak_bw = gpu.hbm_bandwidth_tb * 1e12 * eff_bw   # bytes/s
     ridge_point = peak_compute / peak_bw                           # FLOPs/byte
 
     intensity = flops / bytes_moved if bytes_moved > 0 else float('inf')

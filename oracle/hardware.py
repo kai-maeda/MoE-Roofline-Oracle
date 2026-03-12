@@ -156,9 +156,24 @@ class GPU:
     typical_utilization: float = 0.45     # Achievable cluster utilization
     opex_overhead_fraction: float = 0.10  # Non-power OpEx as fraction of CapEx/yr
 
+    # Software efficiency — fraction of peak achievable with production stacks
+    # (e.g. vLLM / TensorRT-LLM on the GPU's native ecosystem).
+    # compute_efficiency: accounts for GEMM tile utilization, kernel overhead
+    # bw_efficiency: accounts for memory controller efficiency, cache effects
+    # Source: community benchmarks (Artificial Analysis, MLCommons), vendor guides.
+    sw_efficiency_compute: float = 0.85
+    sw_efficiency_bw: float = 0.85
+
+    # Speculative decoding
+    # Effective decode throughput multiplier from speculative decoding / MTP.
+    # 1.0 = disabled. Applied as: effective_tok_s = tok_s × speedup, ITL ÷ speedup.
+    # Sources: EAGLE-2 (Li et al. 2024), TRT-LLM benchmarks, DeepSeek MTP report.
+    spec_decode_speedup: float = 1.0
+
     # Metadata
-    architecture: str = ""     # e.g. "Hopper", "Blackwell", "CDNA3"
-    specs_confirmed: bool = True  # False = estimated / pre-datasheet
+    architecture: str = ""        # e.g. "Hopper", "Blackwell", "CDNA3"
+    specs_confirmed: bool = True   # False = estimated / pre-datasheet
+    supports_fp4: bool = False     # True = native FP4 tensor core support (Blackwell, CDNA4)
 
     @property
     def hbm_bandwidth_gbs(self) -> float:
@@ -276,6 +291,8 @@ NVIDIA_H100_SXM = GPU(
     depreciation_years=3.0,    # Mature generation; standard 3-yr cycle
     typical_utilization=0.50,  # CUDA ecosystem maturity → high utilization
     opex_overhead_fraction=0.10,
+    sw_efficiency_compute=0.92, # Most mature CUDA stack; cuBLAS/TRT-LLM hit ~92% on GEMMs
+    sw_efficiency_bw=0.90,      # HBM3 controller well-optimized; FA3 near-peak BW
     specs_confirmed=True,
 )
 
@@ -294,6 +311,8 @@ NVIDIA_H200_SXM = GPU(
     depreciation_years=3.0,    # Same Hopper die; same cycle as H100
     typical_utilization=0.48,  # Slightly newer → slightly lower adoption than H100
     opex_overhead_fraction=0.10,
+    sw_efficiency_compute=0.90, # Same Hopper die as H100; same kernel maturity
+    sw_efficiency_bw=0.90,      # HBM3e controller well-characterized; same FA3 support
     specs_confirmed=True,
 )
 
@@ -314,7 +333,10 @@ NVIDIA_B200_SXM = GPU(
     depreciation_years=2.5,    # Premium price → faster refresh to stay competitive
     typical_utilization=0.38,  # Ramping deployment; ecosystem still maturing
     opex_overhead_fraction=0.11,
+    sw_efficiency_compute=0.78, # Blackwell new ISA; TRT-LLM Blackwell kernels still maturing
+    sw_efficiency_bw=0.82,      # HBM3e controller good; slight edge from new memory subsystem
     specs_confirmed=True,
+    supports_fp4=True,         # Blackwell native FP4 (MXFP4) — [B200-WP]
 )
 
 NVIDIA_B300_SXM = GPU(
@@ -332,7 +354,10 @@ NVIDIA_B300_SXM = GPU(
     depreciation_years=2.0,    # Top price point → fastest refresh cycle
     typical_utilization=0.30,  # Pre-launch; low initial deployment
     opex_overhead_fraction=0.11,
+    sw_efficiency_compute=0.75, # Pre-launch; Blackwell Ultra kernels not yet optimized
+    sw_efficiency_bw=0.80,      # Estimated; HBM3e controller similar to B200
     specs_confirmed=False,     # Pre-datasheet estimate
+    supports_fp4=True,         # Blackwell Ultra native FP4 — [B300-ANN]
 )
 
 # --- NVIDIA Blackwell NVL72 Rack-Scale Systems ---
@@ -356,7 +381,10 @@ NVIDIA_GB200_NVL72_PER_GPU = GPU(
     depreciation_years=2.5,    # Rack-scale system; higher capex → faster refresh
     typical_utilization=0.35,  # Rack-scale ops complexity reduces steady-state utilization
     opex_overhead_fraction=0.13,  # Rack-scale systems have higher integration/facility overhead
+    sw_efficiency_compute=0.82, # Same B200 die; NVLink domain reduces TP comm overhead
+    sw_efficiency_bw=0.85,      # NVLink fabric helps with collective BW utilization
     specs_confirmed=True,
+    supports_fp4=True,         # Blackwell native FP4 — [NVL72-WP]
 )
 
 NVIDIA_GB300_NVL72_PER_GPU = GPU(
@@ -374,7 +402,10 @@ NVIDIA_GB300_NVL72_PER_GPU = GPU(
     depreciation_years=2.0,    # Pre-launch; fastest expected refresh
     typical_utilization=0.30,  # Very early deployment
     opex_overhead_fraction=0.13,
+    sw_efficiency_compute=0.78, # Pre-launch; B300 Blackwell Ultra kernels not yet available
+    sw_efficiency_bw=0.82,      # Same NVLink advantage as GB200; estimated
     specs_confirmed=False,     # Pre-datasheet estimate
+    supports_fp4=True,         # Blackwell Ultra native FP4 — [GB300-ANN]
 )
 
 # --- AMD CDNA3 Generation ---
@@ -394,6 +425,8 @@ AMD_MI300X = GPU(
     depreciation_years=3.0,    # Mature CDNA3 gen; standard 3-yr cycle
     typical_utilization=0.40,  # ROCm ecosystem gaps reduce achievable utilization vs CUDA
     opex_overhead_fraction=0.13,  # Higher staff support due to ROCm immaturity vs CUDA
+    sw_efficiency_compute=0.70, # ROCm GEMM kernels lag cuBLAS; vLLM ROCm ~70% on CDNA3
+    sw_efficiency_bw=0.78,      # HBM3 controller efficient; ROCm memory stack improving
     specs_confirmed=True,
 )
 
@@ -412,6 +445,8 @@ AMD_MI325X = GPU(
     depreciation_years=3.0,
     typical_utilization=0.38,  # Slightly lower adoption than MI300X
     opex_overhead_fraction=0.14,
+    sw_efficiency_compute=0.70, # Same CDNA3 compute die; same ROCm kernel coverage as MI300X
+    sw_efficiency_bw=0.78,      # HBM3e controller similar to MI300X
     specs_confirmed=True,
 )
 
@@ -432,7 +467,10 @@ AMD_MI355X = GPU(
     depreciation_years=2.5,    # CDNA4 is new; faster expected refresh
     typical_utilization=0.35,  # Early deployment; CDNA4 ROCm coverage still maturing
     opex_overhead_fraction=0.14,
+    sw_efficiency_compute=0.65, # CDNA4 new ISA; ROCm CDNA4 kernel coverage very early
+    sw_efficiency_bw=0.75,      # HBM3e controller estimated; CDNA4 memory stack uncharted
     specs_confirmed=True,
+    supports_fp4=True,         # CDNA4 native FP4 (MXFP4) — [MI355X-PB]
 )
 
 # --- Legacy / PCIe Variants ---
@@ -449,6 +487,8 @@ NVIDIA_H100_PCIE = GPU(
     tdp_w=350.0,               # [H100-WP]
     gpu_cost_usd=25_000.0,
     server_cost_usd=40_000.0,
+    sw_efficiency_compute=0.85, # Same Hopper kernel coverage; PCIe CPU-GPU transfers add overhead
+    sw_efficiency_bw=0.85,      # HBM2e controller well-characterized
     specs_confirmed=True,
 )
 
@@ -513,17 +553,59 @@ CLUSTER_NVL72_GB300 = ClusterConfig(
 )
 
 
+# =============================================================================
+# Speculative Decoding Variants
+# =============================================================================
+# Identical to base GPUs but with spec_decode_speedup applied.
+# Speedup = effective tok/s multiplier (ITL divides, tok/s multiplies).
+# NVIDIA Hopper: ~2.0x (TRT-LLM EAGLE-2, well-benchmarked on H100/H200)
+# NVIDIA Blackwell: ~2.5x (compute-heavy GPUs amortize verifier pass better;
+#   FP4 makes the batch-verify step cheaper; TRT-LLM Blackwell spec decoding)
+# AMD CDNA3: ~1.5x (ROCm vLLM spec decoding; less mature than CUDA stack)
+# AMD CDNA4: ~1.6x (slightly better, but CDNA4 stack still early)
+
+from dataclasses import replace as _dc_replace
+
+NVIDIA_H100_SXM_SPECDEC    = _dc_replace(NVIDIA_H100_SXM,
+    name="NVIDIA H100 SXM +SpecDec", spec_decode_speedup=2.0)
+NVIDIA_H200_SXM_SPECDEC    = _dc_replace(NVIDIA_H200_SXM,
+    name="NVIDIA H200 SXM +SpecDec", spec_decode_speedup=2.0)
+NVIDIA_B200_SXM_SPECDEC    = _dc_replace(NVIDIA_B200_SXM,
+    name="NVIDIA B200 SXM +SpecDec", spec_decode_speedup=2.5)
+NVIDIA_B300_SXM_SPECDEC    = _dc_replace(NVIDIA_B300_SXM,
+    name="NVIDIA B300 SXM (Blackwell Ultra) +SpecDec", spec_decode_speedup=2.5)
+NVIDIA_GB200_NVL72_SPECDEC = _dc_replace(NVIDIA_GB200_NVL72_PER_GPU,
+    name="NVIDIA GB200 NVL72 (per-GPU) +SpecDec", spec_decode_speedup=2.5)
+NVIDIA_GB300_NVL72_SPECDEC = _dc_replace(NVIDIA_GB300_NVL72_PER_GPU,
+    name="NVIDIA GB300 NVL72 (per-GPU) +SpecDec", spec_decode_speedup=2.5)
+AMD_MI300X_SPECDEC         = _dc_replace(AMD_MI300X,
+    name="AMD MI300X +SpecDec", spec_decode_speedup=1.5)
+AMD_MI325X_SPECDEC         = _dc_replace(AMD_MI325X,
+    name="AMD MI325X +SpecDec", spec_decode_speedup=1.5)
+AMD_MI355X_SPECDEC         = _dc_replace(AMD_MI355X,
+    name="AMD MI355X +SpecDec", spec_decode_speedup=1.6)
+
+
 # All GPU entries for iteration / comparison plots
 ALL_GPUS = [
     NVIDIA_H100_SXM,
+    NVIDIA_H100_SXM_SPECDEC,
     NVIDIA_H200_SXM,
+    NVIDIA_H200_SXM_SPECDEC,
     NVIDIA_B200_SXM,
+    NVIDIA_B200_SXM_SPECDEC,
     NVIDIA_B300_SXM,
+    NVIDIA_B300_SXM_SPECDEC,
     NVIDIA_GB200_NVL72_PER_GPU,
+    NVIDIA_GB200_NVL72_SPECDEC,
     NVIDIA_GB300_NVL72_PER_GPU,
+    NVIDIA_GB300_NVL72_SPECDEC,
     AMD_MI300X,
+    AMD_MI300X_SPECDEC,
     AMD_MI325X,
+    AMD_MI325X_SPECDEC,
     AMD_MI355X,
+    AMD_MI355X_SPECDEC,
 ]
 
 # Confirmed (non-estimated) GPUs only

@@ -55,6 +55,7 @@ Parameter count formulas
 
 from dataclasses import dataclass, field
 from typing import Optional
+import math
 import numpy as np
 
 
@@ -427,3 +428,125 @@ GPT3_175B = ModelConfig(
 )
 
 ALL_MODELS = [MIXTRAL_8x7B, MIXTRAL_8x22B, DEEPSEEK_V2, GPT3_175B]
+
+
+# ---------------------------------------------------------------------------
+# MoE Expert Load Imbalance
+# ---------------------------------------------------------------------------
+
+def moe_load_imbalance_factor(
+    batch_size: int,
+    n_ep_groups: int,
+    top_k: int,
+) -> float:
+    """
+    Throughput degradation factor from MoE expert routing load imbalance.
+
+    In Expert Parallelism (EP), tokens are dispatched across n_ep_groups GPU
+    ranks.  Each of the B tokens in a decode batch activates top_k experts;
+    with n_ep_groups ranks in the EP collective, each rank expects to receive:
+
+        mean_load = B × top_k / n_ep_groups  tokens
+
+    Due to random routing, some EP ranks receive more tokens than the mean.
+    The most-loaded rank is the straggler that determines step time.
+
+    Caller must pass n_ep_groups = min(cfg.ep, model.n_experts), NOT the
+    total expert count.  For EP=1 (no tensor-parallel expert split) the
+    formula correctly returns 1.0 since there is no inter-rank contention.
+
+    Formula (balls-into-bins, order-statistic approximation):
+        sigma         = sqrt(mean_load × (1 − top_k/n_ep_groups))
+        z_p           = sqrt(2 × ln(n_ep_groups))
+        expected_max  = mean_load + sigma × z_p
+        factor        = clip(expected_max / mean_load, 1.0, n_ep_groups/top_k)
+
+    Edge cases:
+      - batch_size ≤ 1: no contention; returns 1.0
+      - n_ep_groups ≤ 1 (EP disabled or dense model): returns 1.0
+      - top_k ≥ n_ep_groups (every rank always gets tokens): sigma≈0 → ≈1.0
+
+    Note: assumes uniformly random routing. Real routers with an auxiliary
+    load-balancing loss typically see 50–70% of this analytical upper bound.
+
+    Source:
+      [Mitzenmacher01] Mitzenmacher, M. "The Power of Two Choices in
+          Randomized Load Balancing." IEEE Trans. Parallel Distrib. Syst.
+          12(10), 2001. → balls-into-bins expected maximum.
+    """
+    if batch_size <= 1 or n_ep_groups <= 1 or top_k <= 0:
+        return 1.0
+    p = top_k / n_ep_groups
+    mean_load = batch_size * p
+    if mean_load <= 0:
+        return 1.0
+    sigma = math.sqrt(mean_load * max(0.0, 1.0 - p))
+    z_p = math.sqrt(2.0 * math.log(n_ep_groups))
+    expected_max = mean_load + sigma * z_p
+    factor = expected_max / mean_load
+    max_possible = n_ep_groups / top_k
+    return float(min(max(factor, 1.0), max_possible))
+
+
+def gpu_memory_required_bytes(
+    model: ModelConfig,
+    tp: int,
+    ep: int,
+    pp: int,
+    batch_size: int,
+    seq_len: int,
+) -> float:
+    """
+    Estimated peak HBM required per GPU for a given parallelism config.
+
+    Weights
+    -------
+    - Attention (Q,K,V,O): replicated across EP ranks, sharded by TP across
+      heads, sharded by PP across layers.
+      bytes = (n_layers/PP) × 4 × d_model² × weight_dtype / TP
+
+    - Dense FFN layers: sharded by TP, by PP.
+      bytes = (n_dense_layers/PP) × 2 × d_model × d_ffn × weight_dtype / TP
+
+    - MoE FFN layers: experts sharded across EP ranks, weights within each
+      expert sharded by TP, layers sharded by PP.
+      bytes = (n_moe_layers/PP) × (n_experts/EP) × 2 × d_model × d_ffn
+              × weight_dtype / TP
+
+    KV cache
+    --------
+    Each PP stage stores KV only for its assigned layers; attention heads
+    are sharded by TP.
+      bytes = 2 × (n_layers/PP) × batch × seq_len × (n_heads/TP) × d_head
+              × kv_dtype
+
+    Sources: [Brown20] parameter counts; [Narayanan21] TP sharding;
+    [Rajbhandari22] EP sharding; [Pope22] KV cache sizing.
+    """
+    ep_eff = min(ep, model.n_experts)  # EP capped at total expert count
+
+    layers_per_stage     = model.n_layers       / pp
+    dense_layers_per_stage = model.n_dense_layers / pp
+    moe_layers_per_stage   = model.n_moe_layers   / pp
+
+    attn_bytes     = layers_per_stage       * 4 * model.d_model * model.d_model \
+                     * model.weight_dtype_bytes / tp
+    dense_ffn_bytes = dense_layers_per_stage * 2 * model.d_model * model.d_ffn \
+                     * model.weight_dtype_bytes / tp
+    moe_ffn_bytes  = moe_layers_per_stage   * (model.n_experts / ep_eff) \
+                     * 2 * model.d_model * model.d_ffn \
+                     * model.weight_dtype_bytes / tp
+
+    weight_bytes = attn_bytes + dense_ffn_bytes + moe_ffn_bytes
+
+    kv_bytes = (
+        2                           # K and V
+        * layers_per_stage
+        * batch_size
+        * seq_len
+        * (model.n_heads / tp)
+        * model.d_head
+        * model.kv_cache_dtype_bytes
+    )
+
+    return weight_bytes + kv_bytes
