@@ -1,0 +1,39 @@
+3. FLOP throughput with TP — concrete example:
+
+Start with H100: 989 TFLOP/s, 3.35 TB/s HBM, 900 GB/s NVLink per GPU.
+
+For a decode step with TP=4 on DeepSeek-V2 (21B active params, BF16):
+
+
+FLOPs per step  = 2 × 21B = 42 GFLOPs
+Bytes per step  = 2 × 21B × 2 bytes = 84 GB  (split across 4 GPUs → 21 GB each)
+
+compute_time = 42 GFLOPs / (4 × 989 TFLOP/s) = 0.0106 ms
+memory_time  = 84 GB    / (4 × 3.35 TB/s)    = 0.0063 ms
+Decode is memory-bound (memory_time > compute_time), so:
+
+
+step_time_no_comm = memory_time = 0.0063 ms
+Now add the AllReduce communication overhead. After the attention and FFN layers, TP=4 requires an AllReduce over the hidden dim (d_model = 5120 for DeepSeek-V2):
+
+
+message_size = batch_size × d_model × 2 bytes = 1 × 5120 × 2 = 10 KB
+allreduce_time = 2 × (TP-1)/TP × message_size / NVLink_bw
+               = 2 × (3/4) × 10 KB / 900 GB/s
+               = 0.0000167 ms  (tiny over NVLink)
+
+efficiency = step_time / (step_time + allreduce_time)
+           = 0.0063 / (0.0063 + 0.0000167) ≈ 99.7%
+Over NVLink, TP efficiency is near-perfect. Over InfiniBand NDR (400 GB/s effective, 25× slower):
+
+
+allreduce_time = 0.00038 ms
+efficiency = 0.0063 / (0.0063 + 0.00038) ≈ 94%
+Still high but noticeably degraded — this is why cross-node TP is penalized more than intra-node TP in the Pareto sweep.
+
+The general formula:
+
+
+effective_tflops = TP × peak_tflops_per_gpu × parallelism_efficiency
+step_time = max(flops / effective_tflops, bytes / (TP × peak_bw)) / efficiency
+ITL = step_time (ms)
