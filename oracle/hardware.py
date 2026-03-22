@@ -589,6 +589,19 @@ AMD_MI355X_SPECDEC         = _dc_replace(AMD_MI355X,
 # All GPU entries for iteration / comparison plots
 ALL_GPUS = [
     NVIDIA_H100_SXM,
+    NVIDIA_H200_SXM,
+    NVIDIA_B200_SXM,
+    NVIDIA_B300_SXM,
+    NVIDIA_GB200_NVL72_PER_GPU,
+    NVIDIA_GB300_NVL72_PER_GPU,
+    AMD_MI300X,
+    AMD_MI325X,
+    AMD_MI355X,
+]
+
+# Includes +SpecDec variants for Pareto frontier (ITL/tok_s benefit from speculative decoding)
+ALL_GPUS_WITH_SPECDEC = [
+    NVIDIA_H100_SXM,
     NVIDIA_H100_SXM_SPECDEC,
     NVIDIA_H200_SXM,
     NVIDIA_H200_SXM_SPECDEC,

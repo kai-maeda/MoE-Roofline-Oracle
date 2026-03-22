@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 
 from oracle.hardware import (
-    ALL_GPUS, IB_NDR, IB_HDR, NVLINK_SWITCH_NVL72,
+    ALL_GPUS, ALL_GPUS_WITH_SPECDEC, IB_NDR, IB_HDR, NVLINK_SWITCH_NVL72,
     ClusterConfig, NetworkFabric,
 )
 from oracle.workload import ALL_MODELS, ModelStats, moe_load_imbalance_factor, gpu_memory_required_bytes
@@ -47,8 +47,9 @@ st.caption(
 # Top controls
 # ─────────────────────────────────────────────────────────────────────────────
 
-gpu_name_map  = {g.name: g for g in ALL_GPUS}
-selected_gpus = ALL_GPUS
+gpu_name_map  = {g.name: g for g in ALL_GPUS_WITH_SPECDEC}
+selected_gpus = ALL_GPUS              # roofline + hardware specs: base GPUs only
+pareto_gpus   = ALL_GPUS_WITH_SPECDEC  # pareto: includes +SpecDec variants
 model_name_map = {m.name: m for m in ALL_MODELS}
 
 ISL_OSL_PRESETS = {
@@ -292,10 +293,10 @@ def sweep_pareto_configs(gpu_name, model_name, prefill_seq_len, decode_seq_len, 
             batch_compute_s_adj = batch_compute_s * eff_imbalance
 
             batch_step_s = batch_compute_s_adj + comm_s
-            itl_ms  = batch_step_s * 1e3
+            itl_ms  = batch_step_s * 1e3 / gpu.spec_decode_speedup
             ttft_ms = (prefill_compute_s + comm_s) * 1e3
 
-            tok_s = batch_size / batch_step_s if batch_step_s > 0 else 0.0
+            tok_s = batch_size / batch_step_s * gpu.spec_decode_speedup if batch_step_s > 0 else 0.0
 
             eff = batch_compute_s_adj / batch_step_s if batch_step_s > 0 else 1.0
             cost_per_m = tco.cost_per_million_tokens(tok_s / max(1, num_gpus))
@@ -411,39 +412,65 @@ with tab_roofline:
                 showlegend=True,
             ))
 
-    # Intensity lines per selected precision — same op colors, dash encodes precision
-    OP_COLORS = {
-        "Attn decode":  "#F0E68C",
-        "FFN decode":   "#FFA07A",
-        "Attn prefill": "#00CED1",
-        "FFN prefill":  "#98FB98",
+    # Operation points: plot each (op, gpu, precision) as a point on the roofline.
+    # x = arithmetic intensity (model+seq-len dependent, same across GPUs)
+    # y = min(peak_compute, peak_bw * intensity) — where the op actually lands
+    OP_MARKERS = {
+        "Attn decode":  "circle",
+        "FFN decode":   "square",
+        "Attn prefill": "circle-open",
+        "FFN prefill":  "square-open",
     }
+    _op_legend_shown: set = set()
+
     for prec_name in (selected_precisions or ["BF16"]):
         dtype_bytes_p = DTYPE_OPTIONS[prec_name]["dtype_bytes"]
-        prec_dash = PRECISION_DASH[prec_name]
         _m = dc_replace(model, weight_dtype_bytes=dtype_bytes_p, kv_cache_dtype_bytes=dtype_bytes_p)
-        pf = ModelStats(model=_m, seq_len=prefill_seq_len, batch_size=8, phase="prefill")
-        dc_s = ModelStats(model=_m, seq_len=decode_seq_len, batch_size=8, phase="decode")
+        pf   = ModelStats(model=_m, seq_len=prefill_seq_len, batch_size=8, phase="prefill")
+        dc_s = ModelStats(model=_m, seq_len=decode_seq_len,  batch_size=8, phase="decode")
         op_intensities = [
             ("Attn decode",  dc_s.attention_intensity()),
             ("FFN decode",   dc_s.ffn_intensity()),
             ("Attn prefill", pf.attention_intensity()),
             ("FFN prefill",  pf.ffn_intensity()),
         ]
-        for label, intensity in op_intensities:
-            op_color = OP_COLORS[label]
-            fig.add_shape(
-                type="line",
-                x0=intensity, x1=intensity, y0=0, y1=1,
-                xref="x", yref="paper",
-                line=dict(color=op_color, width=1.5, dash=prec_dash),
-            )
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None], mode="lines",
-                name=f"{label} ({prec_name}, {intensity:.1f})",
-                line=dict(color=op_color, width=1.5, dash=prec_dash),
-                legendgroup=f"ops_{prec_name}",
-            ))
+
+        for idx, (gpu, color) in enumerate(zip(selected_gpus, colors)):
+            if prec_name == "FP4" and not gpu.supports_fp4:
+                continue
+            compute_scale = DTYPE_OPTIONS[prec_name]["compute_scale"]
+            peak_compute  = gpu.flops_bf16 * gpu.sw_efficiency_compute * compute_scale
+            peak_bw       = gpu.hbm_bandwidth_tb * gpu.sw_efficiency_bw
+            short         = gpu.name.replace("NVIDIA ", "").replace("AMD ", "")
+
+            for label, intensity in op_intensities:
+                marker_sym = OP_MARKERS[label]
+                y_pt = min(peak_compute, peak_bw * intensity)
+                regime = "memory-bound" if peak_bw * intensity < peak_compute else "compute-bound"
+                legend_key = (label, prec_name)
+                show_in_legend = legend_key not in _op_legend_shown
+                if show_in_legend:
+                    _op_legend_shown.add(legend_key)
+
+                fig.add_trace(go.Scatter(
+                    x=[intensity], y=[y_pt],
+                    mode="markers",
+                    name=f"{label} ({prec_name})",
+                    legendgroup=f"op_{label}_{prec_name}",
+                    showlegend=show_in_legend,
+                    marker=dict(
+                        symbol=marker_sym,
+                        color=color,
+                        size=10,
+                        line=dict(width=1.5, color="white"),
+                    ),
+                    hovertemplate=(
+                        f"<b>{label}</b> — {short} ({prec_name})<br>"
+                        f"Intensity: {intensity:.1f} FLOP/byte<br>"
+                        f"Achievable: {{y:.1f}} TFLOP/s<br>"
+                        f"Regime: {regime}<extra></extra>"
+                    ),
+                ))
 
     _nice = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000,
              20000, 50000, 100000]
@@ -471,8 +498,11 @@ with tab_roofline:
 
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        "Vertical lines show arithmetic intensity for each operation and phase. "
-        "Where a line intersects a GPU's roofline = achieved performance for that operation. "
+        "Each point shows where an operation lands on a GPU's roofline: "
+        "x = arithmetic intensity (model + sequence-length dependent), "
+        "y = min(peak compute, peak BW × intensity). "
+        "Points on the sloped region are memory-bound; on the flat region, compute-bound. "
+        "Shapes: ● Attn decode, ■ FFN decode, ○ Attn prefill, □ FFN prefill. "
         "Source: Williams, Waterman, Patterson (2009) [WWP09]."
     )
 
@@ -509,7 +539,7 @@ with tab_pareto:
     _all_pareto = []
 
     with st.spinner("Sweeping parallelism configs…"):
-        for idx, (gpu, color) in enumerate(zip(selected_gpus, colors)):
+        for idx, (gpu, color) in enumerate(zip(pareto_gpus, colors)):
             short_name = gpu.name.replace("NVIDIA ", "").replace("AMD ", "")
 
             for prec_name in (selected_precisions or ["BF16"]):

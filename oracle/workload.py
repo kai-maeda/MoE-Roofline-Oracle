@@ -367,49 +367,68 @@ class ModelStats:
 # Model Catalog — known open-weight MoE and dense models
 # ---------------------------------------------------------------------------
 
-# Mixtral 8x7B (Mistral AI)
-MIXTRAL_8x7B = ModelConfig(
-    name="Mixtral-8x7B",
-    d_model=4096,
-    n_layers=32,
-    n_heads=32,
-    d_head=128,
-    d_ffn=14336,
-    n_experts=8,
-    n_experts_active=2,
-    moe_every_n=1,   # Every layer is MoE
-    max_seq_len=32768,
-    vocab_size=32000,
-)
-
-# Mixtral 8x22B (Mistral AI)
-MIXTRAL_8x22B = ModelConfig(
-    name="Mixtral-8x22B",
-    d_model=6144,
-    n_layers=56,
-    n_heads=48,
-    d_head=128,
-    d_ffn=16384,
-    n_experts=8,
-    n_experts_active=2,
-    moe_every_n=1,
-    max_seq_len=65536,
-    vocab_size=32000,
-)
-
-# DeepSeek-V2 (236B total, 21B active)
-DEEPSEEK_V2 = ModelConfig(
-    name="DeepSeek-V2",
-    d_model=5120,
-    n_layers=60,
+# DeepSeek-V3 (671B total, 37B active) — Dec 2024
+# 256 routed experts + 1 shared expert per MoE layer; top-8 routing
+DEEPSEEK_V3 = ModelConfig(
+    name="DeepSeek-V3",
+    d_model=7168,
+    n_layers=61,
     n_heads=128,
     d_head=128,
-    d_ffn=1536,      # MLA: compressed KV, smaller effective d_ffn per expert
-    n_experts=160,
-    n_experts_active=6,
+    d_ffn=2048,       # Per-expert intermediate dim (MLA architecture)
+    n_experts=256,
+    n_experts_active=8,
     moe_every_n=1,
     max_seq_len=128000,
-    vocab_size=102400,
+    vocab_size=128000,
+)
+
+# Llama 4 Scout (109B total, 17B active) — Apr 2025
+# 16 experts, top-1 routing, all layers are MoE
+LLAMA4_SCOUT = ModelConfig(
+    name="Llama-4-Scout-17B-16E",
+    d_model=5120,
+    n_layers=48,
+    n_heads=40,
+    d_head=128,
+    d_ffn=8192,
+    n_experts=16,
+    n_experts_active=1,
+    moe_every_n=1,
+    max_seq_len=131072,
+    vocab_size=202048,
+)
+
+# Llama 4 Maverick (400B total, 17B active) — Apr 2025
+# 128 experts, top-1 routing, MoE and dense layers alternate
+LLAMA4_MAVERICK = ModelConfig(
+    name="Llama-4-Maverick-17B-128E",
+    d_model=5120,
+    n_layers=48,
+    n_heads=40,
+    d_head=128,
+    d_ffn=8192,
+    n_experts=128,
+    n_experts_active=1,
+    moe_every_n=2,    # MoE and dense layers alternate
+    max_seq_len=1048576,
+    vocab_size=202048,
+)
+
+# Qwen3-235B-A22B (235B total, 22B active) — Apr 2025
+# 128 experts, top-8 routing, all layers are MoE
+QWEN3_235B = ModelConfig(
+    name="Qwen3-235B-A22B",
+    d_model=4096,
+    n_layers=94,
+    n_heads=64,
+    d_head=128,
+    d_ffn=1536,       # MoE intermediate size per expert
+    n_experts=128,
+    n_experts_active=8,
+    moe_every_n=1,
+    max_seq_len=131072,
+    vocab_size=151936,
 )
 
 # GPT-3 175B (dense, for baseline comparison)
@@ -427,7 +446,7 @@ GPT3_175B = ModelConfig(
     vocab_size=50257,
 )
 
-ALL_MODELS = [MIXTRAL_8x7B, MIXTRAL_8x22B, DEEPSEEK_V2, GPT3_175B]
+ALL_MODELS = [DEEPSEEK_V3, LLAMA4_SCOUT, LLAMA4_MAVERICK, QWEN3_235B, GPT3_175B]
 
 
 # ---------------------------------------------------------------------------
