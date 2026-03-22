@@ -2,4 +2,4 @@ An analytical inference performance oracle for MoE LLMs. Sweeps TP/EP/PP paralle
 
 [MoE Pareto Frontier Oracle Writeup](https://drive.google.com/file/d/1F1T3haY9lyLnct6BW1V1369tU6MRm7j1/view?usp=sharing)
 
-[Interactive Streamlit App](https://kai-maeda-moe-roofline-oracle-app-x3w9vd.streamlit.app/)
+[Interactive Streamlit App](https://https://kai-maeda-moe-roofline-oracle-app-x3w9vd.streamlit.app/)
